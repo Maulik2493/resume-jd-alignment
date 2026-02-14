@@ -6,8 +6,9 @@ Non-secret defaults are defined here as fallbacks.
 
 Usage:
     from app.config import settings
-    settings.openai_api_key  # raises at startup if missing
-    settings.model           # "gpt-4o-mini" unless overridden
+    settings.openai_api_key   # "ollama" by default (Ollama doesn't need a real key)
+    settings.openai_base_url  # "http://localhost:11434/v1" by default
+    settings.model            # "llama3.2" by default
 """
 
 import os
@@ -22,21 +23,22 @@ load_dotenv()
 class Settings(BaseModel):
     """Application settings — single source of truth for all configuration.
 
-    Secrets are required (no defaults). Non-secrets have sensible defaults
-    that can be overridden via env vars.
+    Defaults are configured for local Ollama usage. Override via env vars
+    or .env file to use OpenAI or Azure OpenAI.
     """
 
-    # ── Secrets (no defaults — must be set in env) ──────────────────────────
+    # ── API credentials ─────────────────────────────────────────────────────
     openai_api_key: str = Field(
-        ..., description="OpenAI API key — required"
+        "ollama", description="API key — 'ollama' for local Ollama, real key for OpenAI"
     )
 
     # ── LLM settings ───────────────────────────────────────────────────────
-    openai_base_url: str | None = Field(
-        None, description="Custom base URL for Azure OpenAI or proxies"
+    openai_base_url: str = Field(
+        "http://localhost:11434/v1",
+        description="API base URL — Ollama default, override for OpenAI/Azure",
     )
     model: str = Field(
-        "gpt-4o-mini", description="OpenAI model identifier"
+        "llama3.2", description="Model identifier (must be pulled in Ollama first)"
     )
     temperature: float = Field(
         0.0, description="LLM temperature — 0 for deterministic extraction"
@@ -63,9 +65,9 @@ def _load_settings() -> Settings:
     rather than failing at first LLM call.
     """
     return Settings(
-        openai_api_key=os.environ.get("OPENAI_API_KEY", ""),
-        openai_base_url=os.environ.get("OPENAI_BASE_URL"),
-        model=os.environ.get("OPENAI_MODEL", "gpt-4o-mini"),
+        openai_api_key=os.environ.get("OPENAI_API_KEY", "ollama"),
+        openai_base_url=os.environ.get("OPENAI_BASE_URL", "http://localhost:11434/v1"),
+        model=os.environ.get("OPENAI_MODEL", "llama3.2"),
         temperature=float(os.environ.get("OPENAI_TEMPERATURE", "0")),
         max_retries=int(os.environ.get("OPENAI_MAX_RETRIES", "1")),
     )

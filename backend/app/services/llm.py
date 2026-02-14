@@ -3,6 +3,10 @@
 This is the sole interface between our application and the LLM provider.
 All calls enforce: temperature 0, structured JSON output, Pydantic validation,
 and a single retry on validation failure.
+
+Compatible with both Ollama (local) and OpenAI (cloud). Uses the simpler
+{"type": "json_object"} response format for broad compatibility, with the
+JSON schema embedded in the system prompt for guidance.
 """
 
 import json
@@ -23,27 +27,26 @@ T = TypeVar("T", bound=BaseModel)
 
 
 def _get_client() -> OpenAI:
-    """Create an OpenAI client from centralized settings."""
+    """Create an OpenAI-compatible client from centralized settings."""
     return OpenAI(
         api_key=settings.openai_api_key,
         base_url=settings.openai_base_url,
     )
 
 
-def _build_json_schema(model_class: Type[T]) -> dict:
-    """Generate OpenAI-compatible JSON schema from a Pydantic model.
+def _build_schema_prompt(model_class: Type[T]) -> str:
+    """Generate a prompt fragment that instructs the LLM to return JSON
+    matching the Pydantic model's schema.
 
-    Wraps the model's JSON schema in the envelope format required by
-    OpenAI's `response_format` parameter.
+    This is used instead of OpenAI's strict json_schema response_format
+    for compatibility with Ollama and other local providers.
     """
-    return {
-        "type": "json_schema",
-        "json_schema": {
-            "name": model_class.__name__,
-            "strict": True,
-            "schema": model_class.model_json_schema(),
-        },
-    }
+    schema = model_class.model_json_schema()
+    return (
+        "You MUST respond with a valid JSON object that conforms to this schema:\n"
+        f"```json\n{json.dumps(schema, indent=2)}\n```\n"
+        "Return ONLY the JSON object. No markdown, no explanation, no extra text."
+    )
 
 
 # ── Public API ──────────────────────────────────────────────────────────────────
@@ -60,7 +63,7 @@ def call_llm(
 
     Hard constraints (from design principles):
     - Temperature is 0 for deterministic results
-    - All calls use structured output (JSON mode with schema)
+    - All calls use JSON object mode with schema in prompt
     - Responses are validated against the Pydantic model
     - Failed validations retry once, then raise
 
@@ -68,7 +71,7 @@ def call_llm(
         system_prompt: Instructions for the LLM's role and constraints.
         user_prompt: The actual text to process (resume / JD).
         response_model: Pydantic model class the response must conform to.
-        model: OpenAI model identifier. Defaults to settings.model.
+        model: Model identifier. Defaults to settings.model.
 
     Returns:
         A validated instance of response_model.
@@ -79,9 +82,13 @@ def call_llm(
     """
     client = _get_client()
     effective_model = model or settings.model
-    response_format = _build_json_schema(response_model)
+
+    # Embed the JSON schema in the system prompt for Ollama compatibility
+    schema_instruction = _build_schema_prompt(response_model)
+    full_system_prompt = f"{system_prompt}\n\n{schema_instruction}"
+
     messages = [
-        {"role": "system", "content": system_prompt},
+        {"role": "system", "content": full_system_prompt},
         {"role": "user", "content": user_prompt},
     ]
 
@@ -89,7 +96,7 @@ def call_llm(
 
     for attempt in range(1 + settings.max_retries):
         try:
-            raw_response = _chat_completion(client, effective_model, messages, response_format)
+            raw_response = _chat_completion(client, effective_model, messages)
             return _parse_and_validate(raw_response, response_model)
 
         except ValidationError as exc:
@@ -125,9 +132,11 @@ def _chat_completion(
     client: OpenAI,
     model: str,
     messages: list[dict],
-    response_format: dict,
 ) -> str:
     """Make the raw API call. Returns the response content string.
+
+    Uses {"type": "json_object"} format for broad compatibility
+    (works with both Ollama and OpenAI).
 
     Raises RuntimeError on API-level failures.
     """
@@ -136,14 +145,14 @@ def _chat_completion(
             model=model,
             messages=messages,
             temperature=settings.temperature,
-            response_format=response_format,
+            response_format={"type": "json_object"},
         )
     except Exception as exc:
-        raise RuntimeError(f"OpenAI API call failed: {exc}") from exc
+        raise RuntimeError(f"LLM API call failed: {exc}") from exc
 
     content = completion.choices[0].message.content
     if content is None:
-        raise RuntimeError("OpenAI returned an empty response (content is None).")
+        raise RuntimeError("LLM returned an empty response (content is None).")
     return content
 
 
