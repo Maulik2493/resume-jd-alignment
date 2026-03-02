@@ -99,25 +99,40 @@ def call_llm(
             raw_response = _chat_completion(client, effective_model, messages)
             return _parse_and_validate(raw_response, response_model)
 
-        except ValidationError as exc:
+        except (ValidationError, json.JSONDecodeError) as exc:
             last_error = exc
+            is_json_error = isinstance(exc, json.JSONDecodeError)
             logger.warning(
-                "LLM response failed Pydantic validation (attempt %d/%d): %s",
+                "LLM response failed %s (attempt %d/%d): %s",
+                "JSON parsing" if is_json_error else "Pydantic validation",
                 attempt + 1,
                 1 + settings.max_retries,
-                exc.error_count(),
+                str(exc) if is_json_error else exc.error_count(),
             )
-            # On retry, append the validation error so the LLM can self-correct
+            # On retry, append the error so the LLM can self-correct
             if attempt < settings.max_retries:
                 messages.append({"role": "assistant", "content": raw_response})
-                messages.append({
-                    "role": "user",
-                    "content": (
-                        "Your previous response failed schema validation with the "
-                        f"following errors:\n{exc}\n\n"
-                        "Please return a corrected JSON object."
-                    ),
-                })
+                if is_json_error:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response was NOT valid JSON. "
+                            f"JSON parse error: {exc}\n\n"
+                            "Return ONLY a valid JSON object. No markdown, no "
+                            "explanation, no trailing text after the closing brace."
+                        ),
+                    })
+                else:
+                    messages.append({
+                        "role": "user",
+                        "content": (
+                            "Your previous response failed schema validation with the "
+                            f"following errors:\n{exc}\n\n"
+                            "Fix ONLY the fields that failed validation. Use EXACTLY the "
+                            "allowed values shown in the error messages above — do not "
+                            "use synonyms or paraphrases. Return the full corrected JSON."
+                        ),
+                    })
 
     raise ValueError(
         f"LLM response did not conform to {response_model.__name__} after "
