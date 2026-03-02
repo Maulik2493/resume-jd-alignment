@@ -44,7 +44,7 @@ class Settings(BaseModel):
         0.0, description="LLM temperature — 0 for deterministic extraction"
     )
     max_retries: int = Field(
-        1, description="Retry count on validation failure before raising"
+        2, description="Retry count on validation failure before raising"
     )
 
     @field_validator("temperature")
