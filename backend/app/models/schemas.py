@@ -28,9 +28,9 @@ class ExperienceEntry(BaseModel):
     """One position / role from the resume's work-experience section."""
     company: str
     title: str
-    start_date: Optional[str] = Field(None, description="As written on the resume, e.g. 'Jan 2020'")
-    end_date: Optional[str] = Field(None, description="As written, or 'Present'")
-    duration_months: Optional[int] = Field(None, description="Calculated duration if dates are clear")
+    start_date: Optional[str] = Field(None, description="Normalized to YYYY-MM format, e.g. '2020-01'")
+    end_date: Optional[str] = Field(None, description="Normalized to YYYY-MM format, or 'Present'")
+    duration_months: Optional[int] = Field(None, description="Auto-calculated from dates — do not set manually")
     bullets: List[str] = Field(default_factory=list, description="Original bullet text, one string per bullet")
     technologies: List[str] = Field(
         default_factory=list,
@@ -86,7 +86,7 @@ class JDRequirement(BaseModel):
     """
     description: str = Field(..., description="Requirement text, preserving the JD's original language")
     priority: Literal["required", "preferred"] = Field(
-        ..., description="'required' if must-have; 'preferred' if nice-to-have"
+        ..., description="MUST be exactly 'required' or 'preferred' — no other values"
     )
     category: Literal["skill", "experience", "education", "certification", "responsibility"] = Field(
         ..., description="What kind of requirement this is"
